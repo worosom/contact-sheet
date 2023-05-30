@@ -32,6 +32,7 @@ def writer(queue: Queue, output_memmap: np.memmap, thumb_size: int):
         else:
             (x, y), file = item
             image = PIL.Image.open(file)
+            image = image.convert('RGB')
             image = center_crop(image)
             image = image.resize((thumb_size, thumb_size))
             output_memmap[x, y] = image
