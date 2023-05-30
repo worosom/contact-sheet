@@ -22,7 +22,7 @@ Options:
 ## Example
 ```
 $ cd contact-sheet
-$ find ../example/dir -name "*.jpg" > filelist.txt
+$ find ../../example/dir -name "*.jpg" > filelist.txt
 $ head < filelist.txt
 ../../example/dir/0.jpg
 ../../example/dir/1.jpg
