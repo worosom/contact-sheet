@@ -2,6 +2,7 @@ import os
 import tempfile
 from uuid import uuid4 as uuid
 from multiprocessing import Process, Queue, cpu_count
+import time
 
 import PIL.Image
 import numpy as np
@@ -67,7 +68,9 @@ def main(filelist, thumb_size, output_dest):
         pbar = tqdm(total=len(files))
         while any([process.is_alive() for process in processes]):
             pbar.n = len(files) - (queue.qsize() - 1)
-        
+            pbar.update(0)
+            time.sleep(1)
+
         for process in processes:
             process.join()
 
