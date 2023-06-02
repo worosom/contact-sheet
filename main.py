@@ -4,9 +4,10 @@ from uuid import uuid4 as uuid
 from multiprocessing import Process, Queue, cpu_count
 import time
 
+import click
 import PIL.Image
 import numpy as np
-import click
+import spacefill.curvetools as curvetools
 from tqdm import tqdm
 
 
@@ -41,19 +42,26 @@ def writer(queue: Queue, output_memmap: np.memmap, thumb_size: int):
 
 @click.command()
 @click.option('--filelist', type=str, required=True, help='List of paths to image files. Paths must be relative to the path of the filelist.')
-@click.option('--thumb_size', type=int, default=256, help='Resolution of the images contained in the contact sheet.')
 @click.option('--output_dest', type=str, required=True, help='Destination of the contact sheet.')
-def main(filelist, thumb_size, output_dest):
+@click.option('--thumb_size', type=int, show_default=True, default=256, help='Resolution of the images contained in the contact sheet.')
+@click.option('--hilbert', is_flag=True, show_default=True, default=False, help='')
+def main(filelist, thumb_size, output_dest, hilbert):
     path = os.path.split(os.path.abspath(filelist))[0]
     files = [os.path.join(path, f.rstrip()) for f in open(filelist)]
 
     num_columns = int(np.ceil(np.sqrt(len(files))))
+    curve_map = curvetools.generate_map(num_columns, num_columns)
 
     output_size = num_columns * thumb_size
     queue = Queue()
     for i, file in enumerate(files):
-        x = i % num_columns
-        y = i // num_columns
+        if hilbert:
+            x, y = curvetools.position_to_coord(i / num_columns**2, curve_map)
+            x = int(x)
+            y = int(y)
+        else:
+            x = i % num_columns
+            y = i // num_columns
         x *= thumb_size
         y *= thumb_size
         queue.put(((slice(y, y+thumb_size), slice(x, x+thumb_size)), file))
