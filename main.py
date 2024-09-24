@@ -1,6 +1,7 @@
 import os
 import tempfile
 from uuid import uuid4 as uuid
+from threading import Thread
 from multiprocessing import Process, Queue, cpu_count
 import time
 
@@ -29,16 +30,33 @@ def writer(queue: Queue, output_memmap: np.memmap, thumb_size: int):
         item = queue.get()
         if item == None:
             queue.put(None)
+            queue.close()
             break
         else:
             (x, y), file = item
             image = PIL.Image.open(file)
-            image = image.convert('RGB')
-            image = center_crop(image)
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+            if image.size[0] != image.size[1]:
+                image = center_crop(image)
             image = image.resize((thumb_size, thumb_size))
             output_memmap[x, y] = image
     output_memmap.flush()
 
+
+def make_queue_item(i, fpath, num_columns, thumb_size, curve_map, hilbert):
+    if hilbert:
+        x, y = curvetools.position_to_coord(i / num_columns**2, curve_map)
+        x = int(x)
+        y = int(y)
+    else:
+        x = i % num_columns
+        y = i // num_columns
+    x *= thumb_size
+    y *= thumb_size
+    return ((slice(y, y+thumb_size), slice(x, x+thumb_size)), fpath)
+
+num_queued = 0
 
 @click.command()
 @click.option('--filelist', type=str, required=True, help='List of paths to image files. Paths must be relative to the path of the filelist.')
@@ -53,35 +71,39 @@ def main(filelist, thumb_size, output_dest, hilbert):
     curve_map = curvetools.generate_map(num_columns, num_columns)
 
     output_size = num_columns * thumb_size
-    queue = Queue()
-    for i, file in enumerate(files):
-        if hilbert:
-            x, y = curvetools.position_to_coord(i / num_columns**2, curve_map)
-            x = int(x)
-            y = int(y)
-        else:
-            x = i % num_columns
-            y = i // num_columns
-        x *= thumb_size
-        y *= thumb_size
-        queue.put(((slice(y, y+thumb_size), slice(x, x+thumb_size)), file))
-    queue.put(None)
+    queue = Queue(cpu_count())
+
+    total = len(files)
+    pbar = tqdm(total=total)
+
+    def add_to_queue():
+        global num_queued
+        for i, fpath in enumerate(files):
+            queue_item = make_queue_item(i, fpath, num_columns, thumb_size, curve_map, hilbert)
+            queue.put(queue_item)
+            num_queued += 1
+        queue.put(None)
+
+    queue_thread = Thread(target=add_to_queue)
+    queue_thread.start()
 
     with tempfile.TemporaryDirectory() as td:
         output_memmap_fname = os.path.join(td, str(uuid()))
         output_memmap = np.memmap(output_memmap_fname, dtype=np.uint8, mode='w+', shape=(output_size, output_size, 3))
-        processes = [Process(target=writer, args=(queue, output_memmap, thumb_size)) for _ in range(cpu_count())]
+        processes = [Process(target=writer, args=(queue, output_memmap, thumb_size)) for _ in range(cpu_count() // 2)]
         for process in processes:
             process.start()
-        
-        pbar = tqdm(total=len(files))
+
         while any([process.is_alive() for process in processes]):
-            pbar.n = len(files) - (queue.qsize() - 1)
+            pbar.n = num_queued - queue.qsize() + 1
             pbar.update(0)
             time.sleep(1)
 
         for process in processes:
             process.join()
+
+        queue_thread.join()
+        queue.close()
 
         PIL.Image.fromarray(output_memmap).save(output_dest)
 
